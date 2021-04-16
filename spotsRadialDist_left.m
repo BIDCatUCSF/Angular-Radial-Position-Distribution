@@ -11,7 +11,7 @@
 %          </Item>
 %        </SurpassComponent>
 %        <SurpassComponent name="bpSurfaces">
-%          <Item name="Bikem Find Spots Close To Surface v3 Left" icon="Matlab" tooltip="Find spots close to surface.">
+%          <Item name="Spots Radial Distribution Left" icon="Matlab" tooltip="Find spots close to surface.">
 %            <Command>MatlabXT::spotRadialDist_left(%i)</Command>
 %          </Item>
 %        </SurpassComponent>
@@ -21,14 +21,13 @@
 %
 %  Description:
 %   
-%   Find the spots that are closer to a surface than a threshold, and 
-%       create two new spots objects: One collects the spots close to the
-%       surface, the other the farer. 
-%   If multiple spots or surfaces are selected, each pair [spots, surface] 
-%       is analyzed: The number of spots objects created is 2 times 
-%       'number of spots' times 'number of surfaces'. 
+%   Bins a spots population into subpopulations based on the radius of curvature of
+%   a surface encasing the spots. Left corresponds to the left facing ovary.
 %
-%
+%   Authors: Adam Fries and Bikem Soygur 2021
+% 	
+%	Modification History:
+% 	February 2021 -  distribution mask can now be applied to a second Spots object 
 
 function spotsRadialDist_left(aImarisApplicationID)
 
@@ -99,11 +98,13 @@ for vIndex = 1:vParent.GetNumberOfChildren
     end
 end
 
+% check that both spots and surfaces have been created
 if min(vNumberOfSpots,vNumberOfSurfaces) == 0
     msgbox('Please create some spots AND a surface object!')
     return
 end
 
+% drop down menu for choosing surface objects
 if vNumberOfSpots>1
     [vSpotsSelection,vOk] = listdlg('ListString',vSpotsName, ...
         'InitialValue', vSpotsSelection, 'SelectionMode','multiple', ...
@@ -111,6 +112,8 @@ if vNumberOfSpots>1
         'PromptString',{'Please select the spots:'});
     if vOk<1, return, end
 end
+
+% get the number of surfaces and spots objects selected by the user
 if vNumberOfSurfaces>1
     [vSurfaceSelection,vOk] = listdlg('ListString',vSurfacesName, ...
         'InitialValue', vSurfaceSelection, 'SelectionMode','multiple', ...
@@ -119,19 +122,23 @@ if vNumberOfSurfaces>1
     if vOk<1, return, end
 end
 
-% compute the distances and create new spots objects
+% get the number of surfaces and spots objects selected by the user
 vNumberOfSurfacesSelected = numel(vSurfaceSelection);
 vNumberOfSpotsSelected = numel(vSpotsSelection);
 
+% list of colors to rotate through for display
 colors = {'ffff00', 'ff00ff', '00ffff', 'ff0000', '00ff00', '00ffff', 'ffff00', ...
     'ff00ff', 'ff0000', '00ff00', '00ffff', 'ff0000', 'ff00ff', 'ffff00'};
 
-
+% loop through the surfaces, for this application there is just the one surface
+%	but we may expand the imaging for multiple surfaces in the future
 for vSurfaceIndex = 1:vNumberOfSurfacesSelected
     vItem = vParent.GetChild(vSurfacesList( ...
         vSurfaceSelection(vSurfaceIndex)) - 1);
     vSurface = vImarisApplication.GetFactory.ToSurfaces(vItem);
 
+	% surface vertices stats via GetVertices were discontinued for Imaris versions later
+	%	than 8.3.1
     vSurfaceVertices = [];
     for vIndex = 0:vSurface.GetNumberOfSurfaces - 1
       vSurfaceVertices = [vSurfaceVertices; vSurface.GetVertices(vIndex)];
@@ -143,9 +150,13 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
     vBlockIndices = 1:vBlockLimit:vNumberOfVertices;
     vNumberOfBlock = size(vBlockIndices,2);
  
-       
-    surf_com = vSurface.GetCenterOfMass(0);
+    % obtain the center of geometry for the surface object, 
+	%	when the user wants an automated calculation for the 
+	% 	radius of curvature, this value is used as one of the 
+	%	3 points
+	 surf_com = vSurface.GetCenterOfMass(0);
     
+	% loop through the spots objects selected and grab the relavent stats		
     for vSpotsIndex = 1:vNumberOfSpotsSelected
         vItem = vParent.GetChild(vSpotsList( ...
             vSpotsSelection(vSpotsIndex)) - 1);
@@ -160,45 +171,35 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         chars2comp = length('Intensity Mean');
         spotNames = cell(vSpotsStats.mNames);
         
-        %% dorsal ventril hist
+        %% dorsal ventril histogram
         zzzpos = vSpotsPosition(:,3);
         zzzbins = 3;
         [uu, vv] = hist(zzzpos, zzzbins);
         figure(10)
         
         vDistancesMin = [];
-        
+       
+		% grab the file name 
         fname = strcat(char(vSurface.GetName), char(vSpots.GetName));
         
-        savedir = strcat(strcat(char(vSurface.GetName), char(vSpots.GetName)), '\');
-        savedirpath = uigetdir('', 'Select the directory to save results');
-        %mkdir(strcat('D:\Data\Bikem\analysis_results\', savedir))
-        mkdir(strcat(savedirpath, '\', savedir))
-        
-        
-     %fname = char(vSpots.GetName);
-       
+        % from the vertices grab the coords for automatic radius of curvature calculation
         topind = (vSurfaceVertices(:,2)==max(vSurfaceVertices(:,2)));
         ptopy = vSurfaceVertices(topind,2);
         ptopx = vSurfaceVertices(topind,1);
         ptopy = ptopy(1);
         ptopx = ptopx(1);
-        %ptopz = vSurfaceVertices(topind,3);
         
         botind = (vSurfaceVertices(:,2)==min(vSurfaceVertices(:,2)));
         pboty = vSurfaceVertices(botind,2);
         pbotx = vSurfaceVertices(botind,1);
         pboty = pboty(1);
         pbotx = pbotx(1);
-        %pbotz = vSpotsPosition(botind,3);
         
         midind = (vSurfaceVertices(:,1)==min(vSurfaceVertices(:,1)));
-        %pmidy = vSurfaceVertices(midind,2);
-        %pmidx = vSurfaceVertices(midind,1);
-        %pmidz = vSpotsPosition(midind,3);
         
-         % user input version
-         
+		% user input for automatic or manual radius of curvature calculation
+		%	mice older than 13.5 days work better with manual measurements of 
+		% 	extents of the surface 
         yn = questdlg('Is the mouse older than 13.5 days?', 'Custom Ends?','Yes', 'No', 'No');
          
         if strcmp(yn, 'Yes')
@@ -213,20 +214,18 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
             ptopy = indata(2);
             pbotx = indata(3);
             pboty = indata(4);
-        end
+        end 
         
-        
-        
-        % center of mass check
-        pmidx = surf_com(1)
-        pmidy = surf_com(2)
+        % begin center of mass check
+        pmidx = surf_com(1);
+        pmidy = surf_com(2);
         
         eps =0.1;
         
         myzs = vSurfaceVertices(:,3);
         surf_ind = (myzs >= (median(myzs) - eps)) & (myzs <= (median(myzs) + eps));
         
-       
+      	% radius of cruvature 
         k = kfrom3pts([ptopx pmidx pbotx],[ptopy pmidy pboty]);
         radcurv = 1/k;
         
@@ -234,9 +233,12 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         surf_outliney = vSurfaceVertices(surf_ind, 2) - pmidy;
         fsize = 24;
         
+		% bins for creating the histogram
         numbinsans = inputdlg('Input Number of Bins', 'Histogram Bins', 1, {'7'});
         numbinsans = str2double(numbinsans);
-        %% pasted this last
+       
+		% go around the circle formed by the surface's radius of curvature
+		%	grab the polar coordinates of the spots
         ntheta = 360;
         thetamax = 2*pi;
         dtheta = 2*pi/ntheta;
@@ -244,14 +246,11 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         % 4-quadrant arctan
         xcen = pmidx + radcurv;
         ycen = pmidy;
-        % still need to translate correctly
         xxs = vSpotsPosition(:,1) - xcen;
         yys = vSpotsPosition(:,2) - ycen;
-        %yys = max(yys) - yys;
         rrs = sqrt(xxs.^2+yys.^2);
         
-        
-        
+       	% figure 1: histogram of the radial distribution 
         figure(1)
         tbins = calcnbins(rrs);
         tbins = numbinsans;
@@ -263,13 +262,11 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         ylabel('Number/Bin')
         title(char(vSpots.GetName))
         rads = 0:0.05:2.1*pi;
-        %rhos = zeros(1,length(rads))+radcurv;
         
         grey = [0.5 0.5 0.5];
         thetas = atan2(yys, xxs) + pi;
-        saveas(gcf, strcat(strcat(savedirpath, '\', savedir),strcat(fname, '_distance_from_polar_origin')), 'jpeg')
         
-        
+        % figure 2: begin polar plot
         figure(2)
         pp = polar(thetas, rrs, 'o');
         set(pp, 'markersize', 3);
@@ -284,13 +281,8 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         ggl = polar(rads, greyrho + px(tbins)+binwidth/2, '--');
         set(ggl, 'color', grey);
         hold on
-        %gg2 = polar(rads, rhos-100, '-');
-        %et(gg2, 'color', grey);
-        %hold on
-        %gg3 = polar(rads, rhos+100, '-');
-        %set(gg3, 'color', grey);
-        %hold on
-        theta_surf = atan2(surf_outliney, surf_outlinex) + pi;
+        
+		theta_surf = atan2(surf_outliney, surf_outlinex) + pi;
         rr_surf = sqrt(surf_outlinex.^2 + surf_outliney.^2);
         hh = polar(theta_surf, rr_surf, '.r');
         set(hh,'markersize',2)
@@ -299,11 +291,11 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         rmid = sqrt(pmidx.^2 + pmidy.^2);
         polar(argmid, rmid, '-r');
         hold on
-        curv_ptsx = [ptopx pmidx pbotx] - xcen;
+        
+		curv_ptsx = [ptopx pmidx pbotx] - xcen;
         curv_ptsy = [ptopy pmidy pboty] - ycen;
         argcen = atan2(curv_ptsy, curv_ptsx) + pi;
         argr = sqrt(curv_ptsx.^2 + curv_ptsy.^2);
-        %polar(argcen,argr, '*k');
         txtA = 'Anterior';
         txtP = 'Posterior';
         xP = double(argr(1)*cos(argcen(1)));
@@ -315,12 +307,10 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         text(xA, yA, txtA);
         text(xP, yP, txtP);
         
-        
-      
         set(gca,'FontSize',fsize, 'FontName', 'Times');
         thetas = thetas + (thetas < 0)*2*pi;
-        
-        saveas(gcf, strcat(strcat(savedirpath, '\', savedir), strcat(fname,'_polar_overlay')), 'jpeg')
+       
+		% loop through angles and count spots within the arclength of the section 
         adamangs =[];
         for i = 0:ntheta
             ang = i*2*pi/ntheta;
@@ -330,28 +320,23 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
             angs = ones(sum(thetachunk),1)*ang*180/pi;
             adamangs = [adamangs, angs']; 
             
-            end
+        end
         
         adamgt180 = adamangs > 180;
         adamangs(adamgt180) = adamangs(adamgt180) - 360;
     
+		% create histogram
         [nn, xouty] = hist(adamangs, 7);
         
-        
-        
+        % figure 3: angular distrubution from the center of the surface
         figure(3)
+
         xchunk = 0:dtheta:thetamax;
-        nonzers = totalchunks>0;
-        
-  
+        nonzers = totalchunks>0;  
         xchunknz = xchunk(nonzers)*180/pi;
         totalchunksnz = totalchunks(nonzers);
-        
-        
-        
         indsgt180 = xchunknz > 180;
         xchunknz(indsgt180) = xchunknz(indsgt180) - 360;
-        
         [xchunknz, xinds] = sort(xchunknz);
         totalchunksnz = totalchunksnz(xinds);
         chunklen = length(xchunknz);
@@ -360,44 +345,31 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
         set(gca,'FontSize',fsize, 'FontName', 'Times')
         xlabel('Angle from center [\circ]')
         ylabel('Number/Bin')
-        title(char(vSpots.GetName))
-        saveas(gcf, strcat(strcat(savdirpath, '\', savedir), strcat(fname, '_angle_from_center')), 'jpeg')
-     
-       
-        figure(7)
-        newthetas = thetas;% - min(thetas);
+        title(char(vSpots.GetName)) 
+      
+		% figure 4: arcdistance distribution from center
+        figure(4)
+        newthetas = thetas;
         indsbt180 = newthetas > pi;
         newthetas(indsbt180) = newthetas(indsbt180) - 2*pi;
-        
         arcss = newthetas.*rrs;
-        
-        
-        %indsgt180 = xchunknz > 180;
-        %xchunknz(indsgt180) = xchunknz(indsgt180) - 360;
-        %nbins4 = calcnbins(arcss);
         nbins4 = chunklen;
         [yarc, xarc] = hist(arcss, nbins4);
-        
         plot(xarc, yarc, '-o');
         axis([min(xarc),max(xarc),0,max(yarc)+10]);
         set(gca,'FontSize',fsize, 'FontName', 'Times')
         xlabel('Arc Distance from Center [\mum]')
         ylabel('Number/Bin')
         title(char(vSpots.GetName))
-        saveas(gcf, strcat(strcat(savedirpath, '\',  savedir), strcat(fname, '_arc_distance_from_center')), 'jpeg')
         
-        
-        xlswrite(strcat(strcat(savedirpath, '\',  savedir, savedir),strcat(fname, '_polardistance.xls')), ...
-            [px;py]', 'polar_distance');
-        xlswrite(strcat(strcat(savedirpath, '\',  savedir, savedir),strcat(fname), '_anteriorangles.xls'), ...
-            [xchunknz;totalchunksnz]', 'anterior_angles');
-        
-        xlswrite(strcat(strcat(savedirpath, '\',  savedir, savedir),strcat(fname), '_anteriorangles_binned.xls'), ...
-            [nn;xouty]', 'anterior_angles_binned');
-        
-        xlswrite(strcat(strcat(savedirpath, '\',  savedir, savedir),strcat(fname), '_DV.xls'), ...
-            [vv;uu]', '3binnedbyz');
-              %    (vNumberOfSpotsSelected*vNumberOfSurfacesSelected));
+        % write the statistics files using xlswrite
+        xlswrite(strcat(fname, '_polardistance.xls'), [px;py]', 'polar_distance');
+        xlswrite(strcat(fname, '_anteriorangles.xls'), [xchunknz;totalchunksnz]', 'anterior_angles');
+        xlswrite(strcat(fname, '_anteriorangles_binned.xls'), nn;xouty]', 'anterior_angles_binned');
+        xlswrite(strcat(fname, '_DV.xls'), [vv;uu]', '3binnedbyz');
+              
+        % loop through the bin centers and filter primary spots population, create new spots 
+		%	groups	 
         for jj = 1:length(px)
             if jj == length(px)
                 vSpotsrbin = rrs >= (px(jj)-binwidth/2) & rrs <= (px(jj)+binwidth/2);
@@ -415,14 +387,54 @@ for vSurfaceIndex = 1:vNumberOfSurfacesSelected
                 vParent.AddChild(vNewSpotsrBin, -1);
             end
         end
-        
-        
-        
-        
     end
 end
 
+% get the 2nd spots population for which to apply the borders defined by 
+%  the first spots population
+if vNumberOfSpots>1
+    [vSpotsSelection,vOk] = listdlg('ListString',vSpotsName, ...
+        'InitialValue', vSpotsSelection, 'SelectionMode','multiple', ...
+        'ListSize',[300 300], 'Name','Find Spots Close To Surface', ...
+        'PromptString',{'Please select the Secondary dependent spots:'});
+    if vOk<1, return, end
+end
 
+vItem = vParent.GetChild(vSpotsList(vSpotsSelection(vSpotsIndex)) - 1);
+vSpots = vImarisApplication.GetFactory.ToSpots(vItem);
+vSpotsPosition = vSpots.GetPositionsXYZ;
+
+xxs = vSpotsPosition(:,1) - xcen;
+yys = vSpotsPosition(:,2) - ycen;
+rrs = sqrt(xxs.^2+yys.^2);
+
+% loop through the secondary spots population and filter based on 
+%  primary spots binning
+sec_spots = zeros(length(px), 1);
+
+for jj = 1:length(px)
+            if jj == length(px)
+                vSpotsrbin = rrs >= (px(jj)-binwidth/2) & rrs <= (px(jj)+binwidth/2);
+                sec_num = sum(vSpotsrbin);
+            else
+                vSpotsrbin = rrs >= (px(jj)-binwidth/2) & rrs < (px(jj)+binwidth/2);
+                sec_num = sum(vSpotsrbin);
+            end
+            if any(vSpotsrbin)
+                vNewSpotsrBin = vImarisApplication.GetFactory.CreateSpots;
+                vNewSpotsrBin.Set(vSpotsPosition(vSpotsrbin, :), ...
+                    vSpotsTime(vSpotsrbin), zeros(sum(vSpotsrbin),1));
+                vNewSpotsrBin.SetRadiiXYZ(vSpotsRadius(vSpotsrbin,:));
+                vNewSpotsrBin.SetColorRGBA(hex2dec(colors(jj)));
+                vNewSpotsrBin.SetName(sprintf('%s from [%.2f um] to [%.2f um]', ...
+                    char(vSpots.GetName), px(jj)-binwidth/2, px(jj)+binwidth/2));
+                vParent.AddChild(vNewSpotsrBin, -1);
+                sec_spots(jj) = sec_num;
+            end
+end
+
+% write the stats from the secondary spots objects            
+xlswrite(strcat(fname, '_2ndary_polardistance.xls'), sec_spots', '2ndary polar_distance');     
 end
 
 function nbins = calcnbins(x, method, minimum, maximum)
